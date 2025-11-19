@@ -181,8 +181,8 @@ new_env bk = do
   sub <- newIORef IM.empty
   return $ Env bk itr ids sub
 
-inc_inters :: Env -> IO ()
-inc_inters e = do
+inter :: Env -> IO ()
+inter e = do
   !n <- readIORef (env_inters e)
   writeIORef (env_inters e) (n + 1)
 
@@ -240,7 +240,7 @@ wnf_ref e s (Ref k) = do
   let (Book m) = env_book e
   case M.lookup k m of
     Just f -> do
-      inc_inters e
+      inter e
       g <- alloc e f
       wnf e s g
     Nothing -> do
@@ -248,17 +248,17 @@ wnf_ref e s (Ref k) = do
 
 wnf_app :: Env -> Stack -> Term -> Term -> IO Term
 wnf_app e s (Lam x f) a = do
-  inc_inters e
+  inter e
   subst e x a
   wnf e s f
 
 wnf_mat :: Env -> Stack -> Term -> Term -> IO Term
 wnf_mat e s (Mat k f g) (Ctr c xs) = do
   if k == c then do
-    inc_inters e
+    inter e
     wnf e (map FApp xs ++ s) f
   else do
-    inc_inters e
+    inter e
     wnf e s (App g (Ctr c xs))
 wnf_mat e s f x = do
   unwind e s (App f x)
@@ -297,18 +297,31 @@ snf e d x = do
 
 book :: String
 book = unlines
-  [ "@id  = λa.a"
-  , "@not = λ{#Z: #S{#Z{}}; λp. #Z{}}"
-  , "@dbl = λ{#Z: #Z{}; λ{#S: λp. #S{#S{(@dbl p)}}; λa.a}}"
-  , "@add = λ{#Z: λb.b; λ{#S: λa. λb. #S{(@add a b)}; λa.a}}"
-  , "@prd = λ{#Z: #Z{}; λ{#S: λp. p; λa.a}}"
+  [ "@id           = λa.a"
+  , "@nat_mul2     = λ{#Z:#Z{};λ{#S:λp.#S{#S{(@nat_mul2 p)}};λa.a}}"
+  , "@nat_add      = λ{#Z:λb.b;λ{#S:λa.λb.#S{(@nat_add a b)};λa.a}}"
+  , "@pred         = λ{#Z:#Z{};λ{#S:λp.p;λa.a}}"
+  , "@bin_inc      = λ{#O:λp.#I{p};λ{#I:λp.#O{(@bin_inc p)};λp.p}}"
+  , "@bin_dec      = λ{#O:λp.#O{(@bin_dec p)};λ{#I:λp.#O{p};λp.p}}"
+  , "@bin_is_zero  = λ{#O:λp.(@bin_is_zero p);λ{#I:λp.#F{};λp.#T{}}}"
+  , "@bin_dup      = λ{#O:λp.(@bin_dup_o(@bin_dup p));λ{#I:λp.(@bin_dup_i(@bin_dup p));λp.#P{#E{},#E{}}}}"
+  , "@bin_dup_o    = λ{#P:λx0.λx1.#P{#O{x0},#O{x1}};λx.x}"
+  , "@bin_dup_i    = λ{#P:λx0.λx1.#P{#I{x0},#I{x1}};λx.x}"
+  , "@bin_busy     = λx.(@bin_busy_0 (@bin_dup (@bin_dec x)))"
+  , "@bin_busy_0   = λ{#P:λx0.λx1.(@bin_busy_1 (@bin_is_zero x0) x1);λx.x}"
+  , "@bin_busy_1   = λ{#T:λx.#T{};λ{#F:λx.(@bin_busy x);λx.x}}"
   ]
 
 tests :: [(String,String)]
 tests =
   [ ("#Z{}", "#Z{}")
-  , ("(@dbl #S{#S{#Z{}}})", "#S{#S{#S{#S{#Z{}}}}}")
-  , ("(@add #S{#S{#Z{}}} #S{#S{#Z{}}})", "#S{#S{#S{#S{#Z{}}}}}")
+  , ("(@nat_mul2  #S{#S{#Z{}}})", "#S{#S{#S{#S{#Z{}}}}}")
+  , ("(@nat_add #S{#S{#Z{}}} #S{#S{#Z{}}})", "#S{#S{#S{#S{#Z{}}}}}")
+  , ("(@bin_inc (@bin_inc (@bin_inc (@bin_inc #O{#O{#O{#O{#E{}}}}}))))", "#O{#O{#I{#O{#E{}}}}}")
+  , ("(@bin_is_zero #O{#O{#O{#I{#O{#E{}}}}}})", "#F{}")
+  , ("(@bin_is_zero #O{#O{#O{#O{#O{#E{}}}}}})", "#T{}")
+  , ("(@bin_dup #O{#I{#O{#O{#E{}}}}})", "#P{#O{#I{#O{#O{#E{}}}}} #O{#I{#O{#O{#E{}}}}}}")
+  , ("(@bin_busy #I{#I{#I{#I{#I{#I{#I{#I{#I{#E{}}}}}}}}}})", "#T{}")
   ]
 
 test :: IO ()
