@@ -318,19 +318,19 @@ snf e d x = do
 
 book :: String
 book = unlines
-  [ "@id           = λa.a"
-  , "@nat_mul2     = λ{#Z:#Z{};λ{#S:λp.#S{#S{@nat_mul2(p)}};λa.a}}"
-  , "@nat_add      = λ{#Z:λb.b;λ{#S:λa.λb.#S{@nat_add(a,b)};λa.a}}"
-  , "@pred         = λ{#Z:#Z{};λ{#S:λp.p;λa.a}}"
-  , "@bin_inc      = λ{#O:λp.#I{p};λ{#I:λp.#O{@bin_inc(p)};λp.p}}"
-  , "@bin_dec      = λ{#O:λp.#I{@bin_dec(p)};λ{#I:λp.#O{p};λp.p}}"
-  , "@bin_is_zero  = λ{#O:λp.@bin_is_zero(p);λ{#I:λp.#F{};λp.#T{}}}"
-  , "@bin_dup      = λ{#O:λp.@bin_dup_o(@bin_dup(p));λ{#I:λp.@bin_dup_i(@bin_dup(p));λp.#P{#E{},#E{}}}}"
-  , "@bin_dup_o    = λ{#P:λx0.λx1.#P{#O{x0},#O{x1}};λx.x}"
-  , "@bin_dup_i    = λ{#P:λx0.λx1.#P{#I{x0},#I{x1}};λx.x}"
-  , "@bin_busy     = λx.@bin_busy_0(@bin_dup(@bin_dec(x)))"
-  , "@bin_busy_0   = λ{#P:λx0.λx1.@bin_busy_1(@bin_is_zero(x0),x1);λx.x}"
-  , "@bin_busy_1   = λ{#T:λx.#T{};λ{#F:λx.@bin_busy(x);λx.x}}"
+  [ "@id          = λa.a"
+  , "@nat_mul2    = λ{#Z:#Z{};λ{#S:λp.#S{#S{@nat_mul2(p)}};λa.a}}"
+  , "@nat_add     = λ{#Z:λb.b;λ{#S:λa.λb.#S{@nat_add(a,b)};λa.a}}"
+  , "@pred        = λ{#Z:#Z{};λ{#S:λp.p;λa.a}}"
+  , "@bin_inc     = λ{#O:λp.#I{p};λ{#I:λp.#O{@bin_inc(p)};λp.p}}"
+  , "@bin_dec     = λ{#O:λp.#I{@bin_dec(p)};λ{#I:λp.#O{p};λp.p}}"
+  , "@bin_is_zero = λ{#O:λp.@bin_is_zero(p);λ{#I:λp.#F{};λp.#T{}}}"
+  , "@bin_dup     = λ{#O:λp.@bin_dup_o(@bin_dup(p));λ{#I:λp.@bin_dup_i(@bin_dup(p));λp.#P{#E{},#E{}}}}"
+  , "@bin_dup_o   = λ{#P:λx0.λx1.#P{#O{x0},#O{x1}};λx.x}"
+  , "@bin_dup_i   = λ{#P:λx0.λx1.#P{#I{x0},#I{x1}};λx.x}"
+  , "@bin_busy    = λx.@bin_busy_0(@bin_dup(@bin_dec(x)))"
+  , "@bin_busy_0  = λ{#P:λx0.λx1.@bin_busy_1(@bin_is_zero(x0),x1);λx.x}"
+  , "@bin_busy_1  = λ{#T:λx.#T{};λ{#F:λx.@bin_busy(x);λx.x}}"
   ]
 
 tests :: [(String,String)]
