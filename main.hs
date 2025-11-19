@@ -201,7 +201,7 @@ fresh :: Env -> IO Name
 fresh e = do
   !n <- readIORef (env_new_id e)
   writeIORef (env_new_id e) (n + 1)
-  return ((n `shiftL` 6) + 63)
+  return $ n
 
 subst :: Env -> Name -> Term -> IO ()
 subst e k v = modifyIORef' (env_sub_map e) (IM.insert (k) v)
