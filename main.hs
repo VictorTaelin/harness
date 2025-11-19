@@ -31,10 +31,10 @@ data Term
 data Book = Book (M.Map Name Term)
 
 data Env = Env
-  { env_book    :: !Book
-  , env_inters  :: !(IORef Int)
-  , env_new_id  :: !(IORef Int)
-  , env_sub_map :: !(IORef (IM.IntMap Term))
+  { env_book  :: !Book
+  , env_count :: !(IORef Int)
+  , env_fresh :: !(IORef Int)
+  , env_subst :: !(IORef (IM.IntMap Term))
   }
 
 -- Showing
@@ -194,26 +194,26 @@ new_env bk = do
 
 inter :: Env -> IO ()
 inter e = do
-  !n <- readIORef (env_inters e)
-  writeIORef (env_inters e) (n + 1)
+  !n <- readIORef (env_count e)
+  writeIORef (env_count e) (n + 1)
 
 fresh :: Env -> IO Name
 fresh e = do
-  !n <- readIORef (env_new_id e)
-  writeIORef (env_new_id e) (n + 1)
+  !n <- readIORef (env_fresh e)
+  writeIORef (env_fresh e) (n + 1)
   return $ n
 
 subst :: Env -> Name -> Term -> IO ()
-subst e k v = modifyIORef' (env_sub_map e) (IM.insert (k) v)
+subst e k v = modifyIORef' (env_subst e) (IM.insert (k) v)
 
 take_sub :: Env -> Name -> IO (Maybe Term)
 take_sub e k = do
-  !m <- readIORef (env_sub_map e)
+  !m <- readIORef (env_subst e)
   case IM.lookup k m of
     Nothing -> do
       return Nothing
     Just v  -> do
-      writeIORef (env_sub_map e) (IM.delete k m)
+      writeIORef (env_subst e) (IM.delete k m)
       return (Just v)
 
 -- WNF
@@ -227,27 +227,30 @@ data Frame
 type Stack = [Frame]
 
 wnf :: Env -> Stack -> Term -> IO Term
-wnf e s (App f x) = wnf e (FApp x : s) f
-wnf e s (Var k)   = wnf_var e s (Var k)
-wnf e s (Ref k)   = wnf_ref e s (Ref k)
-wnf e s t         = unwind e s t
+wnf = reduce
+
+reduce :: Env -> Stack -> Term -> IO Term
+reduce e s (App f x) = reduce e (FApp x : s) f
+reduce e s (Var k)   = var e s (Var k)
+reduce e s (Ref k)   = ref e s (Ref k)
+reduce e s t         = unwind e s t
 
 unwind :: Env -> Stack -> Term -> IO Term
-unwind e (FApp a : s) (Lam x f)   = wnf_app e s (Lam x f) a
-unwind e (FApp a : s) (Mat k f g) = wnf e (FMat (Mat k f g) : s) a
+unwind e (FApp a : s) (Lam x f)   = app e s (Lam x f) a
+unwind e (FApp a : s) (Mat k f g) = reduce e (FMat (Mat k f g) : s) a
 unwind e (FApp a : s) x           = unwind e s (App x a)
-unwind e (FMat f : s) x           = wnf_mat e s f x
+unwind e (FMat f : s) x           = mat e s f x
 unwind e []           x           = return x
 
-wnf_var :: Env -> Stack -> Term -> IO Term
-wnf_var e s (Var k) = do
+var :: Env -> Stack -> Term -> IO Term
+var e s (Var k) = do
   mt <- take_sub e k
   case mt of
     Just t' -> wnf e s t'
     Nothing -> unwind e s (Var k)
 
-wnf_ref :: Env -> Stack -> Term -> IO Term
-wnf_ref e s (Ref k) = do
+ref :: Env -> Stack -> Term -> IO Term
+ref e s (Ref k) = do
   let (Book m) = env_book e
   case M.lookup k m of
     Just f -> do
@@ -257,21 +260,21 @@ wnf_ref e s (Ref k) = do
     Nothing -> do
       error $ "UndefinedReference: " ++ int_to_name k
 
-wnf_app :: Env -> Stack -> Term -> Term -> IO Term
-wnf_app e s (Lam x f) a = do
+app :: Env -> Stack -> Term -> Term -> IO Term
+app e s (Lam x f) a = do
   inter e
   subst e x a
   wnf e s f
 
-wnf_mat :: Env -> Stack -> Term -> Term -> IO Term
-wnf_mat e s (Mat k f g) (Ctr c xs) = do
+mat :: Env -> Stack -> Term -> Term -> IO Term
+mat e s (Mat k f g) (Ctr c xs) = do
   if k == c then do
     inter e
     wnf e (map FApp xs ++ s) f
   else do
     inter e
     wnf e s (App g (Ctr c xs))
-wnf_mat e s f x = do
+mat e s f x = do
   unwind e s (App f x)
 
 -- Allocation
@@ -349,7 +352,7 @@ test :: IO ()
 test = forM_ tests $ \ (src, exp) -> do
   !env <- new_env $ read_book book
   !det <- show <$> snf env 1 (read_term src)
-  !itr <- readIORef (env_inters env)
+  !itr <- readIORef (env_count env)
   if det == exp then do
     putStrLn $ "[PASS] " ++ src ++ " → " ++ det ++ " | #" ++ show itr
   else do
@@ -367,7 +370,7 @@ run book_src term_src = do
   !val <- alloc env $ read_term term_src
   !val <- snf env 1 val
   !end <- getCPUTime
-  !itr <- readIORef (env_inters env)
+  !itr <- readIORef (env_count env)
   !dt  <- return $ fromIntegral (end - ini) / (10^12)
   !ips <- return $ fromIntegral itr / dt
   putStrLn $ show val
