@@ -5,6 +5,7 @@ import Data.Bits (shiftL)
 import Data.IORef
 import Data.List (foldl', elemIndex)
 import System.CPUTime
+import System.Environment (getArgs)
 import Text.ParserCombinators.ReadP
 import Text.Printf
 import qualified Data.IntMap.Strict as IM
@@ -170,70 +171,6 @@ read_book s = case readP_to_S parse_book s of
   [(b, "")] -> b
   _         -> error "bad-parse"
 
--- WNF
--- ===
-
-data Frame
-  = FApp Term
-  | FMat Term
-  deriving Show
-
-type Stack = [Frame]
-
-wnf :: Env -> Stack -> Term -> IO Term
-wnf e s (Var k)   = wnf_sub e s k
-wnf e s (App f x) = wnf e (FApp x : s) f
-wnf e s (Ref k)   = wnf_ref e s k
-wnf e s f         = wnf_ret e s f
-
-wnf_ret :: Env -> Stack -> Term -> IO Term
-wnf_ret e []      v = return v
-wnf_ret e (x : s) v = case x of
-  FApp a   -> wnf_app e s v a
-  FMat f  -> wnf_app_mat e s f v
-
-wnf_sub :: Env -> Stack -> Name -> IO Term
-wnf_sub e s k = do
-  mt <- take_sub e k
-  case mt of
-    Just t  -> wnf e s t
-    Nothing -> wnf_ret e s (Var k)
-
-wnf_app :: Env -> Stack -> Term -> Term -> IO Term
-wnf_app e s f a = do
-  case f of
-    Lam {} -> wnf_app_lam e s f a
-    Mat {} -> wnf e (FMat f : s) a
-    _      -> wnf_ret e s (App f a)
-
-wnf_app_lam :: Env -> Stack -> Term -> Term -> IO Term
-wnf_app_lam e s (Lam fx ff) v = do
-  inc_inters e
-  subst e fx v
-  wnf e s ff
-
-wnf_app_mat :: Env -> Stack -> Term -> Term -> IO Term
-wnf_app_mat e s f@(Mat mn mc md) a = case a of
-  Ctr cn args -> do
-    inc_inters e
-    if mn == cn
-      then app e s mc args
-      else app e s md args
-      where app e s f args = wnf e (map FApp args ++ s) f
-  _ -> do
-    wnf_ret e s (App f a)
-
-
-wnf_ref :: Env -> Stack -> Name -> IO Term
-wnf_ref e s k = do
-  let (Book m) = env_book e
-  case M.lookup k m of
-    Just f  -> do
-      inc_inters e
-      g <- alloc e f
-      wnf e s g
-    Nothing -> error $ "UndefinedReference: " ++ int_to_name k
-
 -- Environment
 -- ===========
 
@@ -268,6 +205,62 @@ take_sub e k = do
       writeIORef (env_sub_map e) (IM.delete k m)
       return (Just v)
 
+-- WNF
+-- ===
+
+data Frame
+  = FApp Term
+  | FMat Term
+  deriving Show
+
+type Stack = [Frame]
+
+wnf :: Env -> Stack -> Term -> IO Term
+wnf e s (App f x) = wnf e (FApp x : s) f
+wnf e s (Var k)   = wnf_var e s (Var k)
+wnf e s (Ref k)   = wnf_ref e s (Ref k)
+wnf e s t         = unwind e s t
+
+unwind :: Env -> Stack -> Term -> IO Term
+unwind e (FApp a : s) (Lam x f)      = wnf_app e s (Lam x f) a
+unwind e (FApp a : s) (Mat fk ff fg) = wnf e (FMat (Mat fk ff fg) : s) a
+unwind e (FApp a : s) val            = unwind e s (App val a)
+unwind e (FMat f : s) val            = wnf_mat e s f val
+unwind e []           val            = return val
+
+wnf_var :: Env -> Stack -> Term -> IO Term
+wnf_var e s (Var k) = do
+  mt <- take_sub e k
+  case mt of
+    Just t' -> wnf e s t'
+    Nothing -> unwind e s (Var k)
+
+wnf_ref :: Env -> Stack -> Term -> IO Term
+wnf_ref e s (Ref k) = do
+  let (Book m) = env_book e
+  case M.lookup k m of
+    Just f -> do
+      inc_inters e
+      g <- alloc e f
+      wnf e s g
+    Nothing -> error $ "UndefinedReference: " ++ int_to_name k
+
+wnf_app :: Env -> Stack -> Term -> Term -> IO Term
+wnf_app e s (Lam x f) a = do
+  inc_inters e
+  subst e x a
+  wnf e s f
+
+wnf_mat :: Env -> Stack -> Term -> Term -> IO Term
+wnf_mat e s (Mat fk ff fg) (Ctr xk xxs) = do
+  if fk == xk then do
+    inc_inters e
+    wnf e (map FApp xxs ++ s) ff
+  else do
+    inc_inters e
+    wnf e (map FApp xxs ++ s) fg
+wnf_mat e s f x = do
+  unwind e s (App f x)
 
 -- Allocation
 -- ==========
@@ -332,20 +325,26 @@ test = forM_ tests $ \ (src, exp) -> do
 -- Main
 -- ====
 
--- run :: String -> String -> IO ()
--- run book_src term_src = do
-  -- !env <- new_env $ read_book book_src
-  -- !ini <- getCPUTime
-  -- !val <- alloc env $ read_term term_src
-  -- !val <- snf env 1 val
-  -- !end <- getCPUTime
-  -- !itr <- readIORef (env_inters env)
-  -- !dt  <- return $ fromIntegral (end - ini) / (10^12)
-  -- !ips <- return $ fromIntegral itr / dt
-  -- putStrLn $ show val
-  -- putStrLn $ "- Itrs: " ++ show itr ++ " interactions"
-  -- printf "- Time: %.3f seconds\n" (dt :: Double)
-  -- printf "- Perf: %.2f M interactions/s\n" (ips / 1000000 :: Double)
+run :: String -> String -> IO ()
+run book_src term_src = do
+  !env <- new_env $ read_book book_src
+  !ini <- getCPUTime
+  !val <- alloc env $ read_term term_src
+  !val <- snf env 1 val
+  !end <- getCPUTime
+  !itr <- readIORef (env_inters env)
+  !dt  <- return $ fromIntegral (end - ini) / (10^12)
+  !ips <- return $ fromIntegral itr / dt
+  putStrLn $ show val
+  putStrLn $ "- Itrs: " ++ show itr ++ " interactions"
+  printf "- Time: %.3f seconds\n" (dt :: Double)
+  printf "- Perf: %.2f M interactions/s\n" (ips / 1000000 :: Double)
 
 main :: IO ()
-main = test
+main = do
+  args <- getArgs
+  case args of
+    (fname:_) -> do
+      book <- readFile fname
+      run book "@main"
+    _ -> test
