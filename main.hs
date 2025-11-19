@@ -268,15 +268,25 @@ wnf_mat e s f x = do
 
 alloc :: Env -> Term -> IO Term
 alloc e term = go IM.empty term where
-  go m (Var k) = return $ Var (IM.findWithDefault k k m)
-  go m (App f x) = App <$> go m f <*> go m x
+  go m (Var k) = do
+    return $ Var (IM.findWithDefault k k m)
+  go m (App f x) = do
+    f' <- go m f
+    x' <- go m x
+    return (App f' x')
   go m (Lam k f) = do
     k' <- fresh e
     f' <- go (IM.insert k k' m) f
     return $ Lam k' f'
-  go m (Ctr k args) = Ctr k <$> mapM (go m) args
-  go m (Mat k c d) = Mat k <$> go m c <*> go m d
-  go m (Ref k) = return (Ref k)
+  go m (Ctr k args) = do
+    args' <- mapM (go m) args
+    return (Ctr k args')
+  go m (Mat k c d) = do
+    c' <- go m c
+    d' <- go m d
+    return (Mat k c' d')
+  go m (Ref k) = do
+    return (Ref k)
 
 -- Normalization
 -- =============
@@ -302,7 +312,7 @@ book = unlines
   , "@nat_add      = λ{#Z:λb.b;λ{#S:λa.λb.#S{(@nat_add a b)};λa.a}}"
   , "@pred         = λ{#Z:#Z{};λ{#S:λp.p;λa.a}}"
   , "@bin_inc      = λ{#O:λp.#I{p};λ{#I:λp.#O{(@bin_inc p)};λp.p}}"
-  , "@bin_dec      = λ{#O:λp.#O{(@bin_dec p)};λ{#I:λp.#O{p};λp.p}}"
+  , "@bin_dec      = λ{#O:λp.#I{(@bin_dec p)};λ{#I:λp.#O{p};λp.p}}"
   , "@bin_is_zero  = λ{#O:λp.(@bin_is_zero p);λ{#I:λp.#F{};λp.#T{}}}"
   , "@bin_dup      = λ{#O:λp.(@bin_dup_o(@bin_dup p));λ{#I:λp.(@bin_dup_i(@bin_dup p));λp.#P{#E{},#E{}}}}"
   , "@bin_dup_o    = λ{#P:λx0.λx1.#P{#O{x0},#O{x1}};λx.x}"
@@ -321,7 +331,7 @@ tests =
   , ("(@bin_is_zero #O{#O{#O{#I{#O{#E{}}}}}})", "#F{}")
   , ("(@bin_is_zero #O{#O{#O{#O{#O{#E{}}}}}})", "#T{}")
   , ("(@bin_dup #O{#I{#O{#O{#E{}}}}})", "#P{#O{#I{#O{#O{#E{}}}}} #O{#I{#O{#O{#E{}}}}}}")
-  , ("(@bin_busy #I{#I{#I{#I{#I{#I{#I{#I{#I{#E{}}}}}}}}}})", "#T{}")
+  , ("(@bin_busy #I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#E{}}}}}}}}}}}}}}}})", "#T{}")
   ]
 
 test :: IO ()
