@@ -3,7 +3,7 @@
 import Control.Monad (forM_)
 import Data.Bits (shiftL)
 import Data.IORef
-import Data.List (foldl', elemIndex)
+import Data.List (foldl', elemIndex, intercalate)
 import System.CPUTime
 import System.Environment (getArgs)
 import Text.ParserCombinators.ReadP
@@ -46,7 +46,11 @@ instance Show Term where
   show (Lam k f)     = "λ" ++ int_to_name k ++ "." ++ show f
   show (App f x)     = app f [x] where
     app (App f x) xs = app f (x : xs)
-    app f         xs = "(" ++ unwords (map show (f : xs)) ++ ")"
+    app f         xs =
+      let func = case f of
+                   Lam _ _ -> "(" ++ show f ++ ")"
+                   _       -> show f
+      in func ++ "(" ++ intercalate "," (map show xs) ++ ")"
   show (Ctr k xs)    = "#" ++ int_to_name k ++ "{" ++ unwords (map show xs) ++ "}"
   show (Mat k c d)   = "λ{#" ++ int_to_name k ++ ":" ++ show c ++ ";" ++ show d ++ "}"
 
@@ -85,25 +89,27 @@ parse_name = parse_lexeme $ do
   return (head : tail)
 
 parse_term :: ReadP Term
-parse_term = parse_term_base
+parse_term = do
+  t <- parse_term_base
+  parse_term_suff t
 
 parse_term_base :: ReadP Term
 parse_term_base = parse_lexeme $ choice
   [ parse_lam
-  , parse_par
   , parse_ctr
   , parse_mat
   , parse_ref
   , parse_var
   ]
 
-parse_par :: ReadP Term
-parse_par = do
-  parse_lexeme (char '(')
-  t <- parse_term
-  ts <- many parse_term
-  parse_lexeme (char ')')
-  return (foldl' App t ts)
+parse_term_suff :: Term -> ReadP Term
+parse_term_suff t = loop <++ return t where
+  loop = do
+    parse_lexeme (char '(')
+    args <- sepBy parse_term (parse_lexeme (char ','))
+    parse_lexeme (char ')')
+    let t' = foldl' App t args
+    parse_term_suff t'
 
 parse_lam :: ReadP Term
 parse_lam = do
@@ -308,30 +314,30 @@ snf e d x = do
 book :: String
 book = unlines
   [ "@id           = λa.a"
-  , "@nat_mul2     = λ{#Z:#Z{};λ{#S:λp.#S{#S{(@nat_mul2 p)}};λa.a}}"
-  , "@nat_add      = λ{#Z:λb.b;λ{#S:λa.λb.#S{(@nat_add a b)};λa.a}}"
+  , "@nat_mul2     = λ{#Z:#Z{};λ{#S:λp.#S{#S{@nat_mul2(p)}};λa.a}}"
+  , "@nat_add      = λ{#Z:λb.b;λ{#S:λa.λb.#S{@nat_add(a,b)};λa.a}}"
   , "@pred         = λ{#Z:#Z{};λ{#S:λp.p;λa.a}}"
-  , "@bin_inc      = λ{#O:λp.#I{p};λ{#I:λp.#O{(@bin_inc p)};λp.p}}"
-  , "@bin_dec      = λ{#O:λp.#I{(@bin_dec p)};λ{#I:λp.#O{p};λp.p}}"
-  , "@bin_is_zero  = λ{#O:λp.(@bin_is_zero p);λ{#I:λp.#F{};λp.#T{}}}"
-  , "@bin_dup      = λ{#O:λp.(@bin_dup_o(@bin_dup p));λ{#I:λp.(@bin_dup_i(@bin_dup p));λp.#P{#E{},#E{}}}}"
+  , "@bin_inc      = λ{#O:λp.#I{p};λ{#I:λp.#O{@bin_inc(p)};λp.p}}"
+  , "@bin_dec      = λ{#O:λp.#I{@bin_dec(p)};λ{#I:λp.#O{p};λp.p}}"
+  , "@bin_is_zero  = λ{#O:λp.@bin_is_zero(p);λ{#I:λp.#F{};λp.#T{}}}"
+  , "@bin_dup      = λ{#O:λp.@bin_dup_o(@bin_dup(p));λ{#I:λp.@bin_dup_i(@bin_dup(p));λp.#P{#E{},#E{}}}}"
   , "@bin_dup_o    = λ{#P:λx0.λx1.#P{#O{x0},#O{x1}};λx.x}"
   , "@bin_dup_i    = λ{#P:λx0.λx1.#P{#I{x0},#I{x1}};λx.x}"
-  , "@bin_busy     = λx.(@bin_busy_0 (@bin_dup (@bin_dec x)))"
-  , "@bin_busy_0   = λ{#P:λx0.λx1.(@bin_busy_1 (@bin_is_zero x0) x1);λx.x}"
-  , "@bin_busy_1   = λ{#T:λx.#T{};λ{#F:λx.(@bin_busy x);λx.x}}"
+  , "@bin_busy     = λx.@bin_busy_0(@bin_dup(@bin_dec(x)))"
+  , "@bin_busy_0   = λ{#P:λx0.λx1.@bin_busy_1(@bin_is_zero(x0),x1);λx.x}"
+  , "@bin_busy_1   = λ{#T:λx.#T{};λ{#F:λx.@bin_busy(x);λx.x}}"
   ]
 
 tests :: [(String,String)]
 tests =
   [ ("#Z{}", "#Z{}")
-  , ("(@nat_mul2  #S{#S{#Z{}}})", "#S{#S{#S{#S{#Z{}}}}}")
-  , ("(@nat_add #S{#S{#Z{}}} #S{#S{#Z{}}})", "#S{#S{#S{#S{#Z{}}}}}")
-  , ("(@bin_inc (@bin_inc (@bin_inc (@bin_inc #O{#O{#O{#O{#E{}}}}}))))", "#O{#O{#I{#O{#E{}}}}}")
-  , ("(@bin_is_zero #O{#O{#O{#I{#O{#E{}}}}}})", "#F{}")
-  , ("(@bin_is_zero #O{#O{#O{#O{#O{#E{}}}}}})", "#T{}")
-  , ("(@bin_dup #O{#I{#O{#O{#E{}}}}})", "#P{#O{#I{#O{#O{#E{}}}}} #O{#I{#O{#O{#E{}}}}}}")
-  , ("(@bin_busy #I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#E{}}}}}}}}}}}}}}}})", "#T{}")
+  , ("@nat_mul2(#S{#S{#Z{}}})", "#S{#S{#S{#S{#Z{}}}}}")
+  , ("@nat_add(#S{#S{#Z{}}}, #S{#S{#Z{}}})", "#S{#S{#S{#S{#Z{}}}}}")
+  , ("@bin_inc(@bin_inc(@bin_inc(@bin_inc(#O{#O{#O{#O{#E{}}}}}))))", "#O{#O{#I{#O{#E{}}}}}")
+  , ("@bin_is_zero(#O{#O{#O{#I{#O{#E{}}}}}})", "#F{}")
+  , ("@bin_is_zero(#O{#O{#O{#O{#O{#E{}}}}}})", "#T{}")
+  , ("@bin_dup(#O{#I{#O{#O{#E{}}}}})", "#P{#O{#I{#O{#O{#E{}}}}} #O{#I{#O{#O{#E{}}}}}}")
+  , ("@bin_busy(#I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#E{}}}}}}}}}}}}}}}})", "#T{}")
   ]
 
 test :: IO ()
