@@ -41,18 +41,14 @@ data Env = Env
 -- =======
 
 instance Show Term where
-  show (Var k)       = int_to_name k
-  show (Ref k)       = "@" ++ int_to_name k
-  show (Lam k f)     = "λ" ++ int_to_name k ++ "." ++ show f
-  show (App f x)     = app f [x] where
-    app (App f x) xs = app f (x : xs)
-    app f         xs =
-      let func = case f of
-                   Lam _ _ -> "(" ++ show f ++ ")"
-                   _       -> show f
-      in func ++ "(" ++ intercalate "," (map show xs) ++ ")"
-  show (Ctr k xs)    = "#" ++ int_to_name k ++ "{" ++ unwords (map show xs) ++ "}"
-  show (Mat k c d)   = "λ{#" ++ int_to_name k ++ ":" ++ show c ++ ";" ++ show d ++ "}"
+  show (Var k)         = int_to_name k
+  show (Ref k)         = "@" ++ int_to_name k
+  show (Lam k f)       = "λ" ++ int_to_name k ++ "." ++ show f
+  show (App f@App{} x) = init (show f) ++ "," ++ show x ++ ")"
+  show (App f@Lam{} x) = "(" ++ show f ++ ")(" ++ show x ++ ")"
+  show (App f x)       = show f ++ "(" ++ show x ++ ")"
+  show (Ctr k xs)      = "#" ++ int_to_name k ++ "{" ++ unwords (map show xs) ++ "}"
+  show (Mat k c d)     = "λ{#" ++ int_to_name k ++ ":" ++ show c ++ ";" ++ show d ++ "}"
 
 instance Show Book where
   show (Book m) = unlines ["@" ++ int_to_name k ++ " = " ++ show ct | (k, ct) <- M.toList m]
@@ -97,10 +93,19 @@ parse_term_base :: ReadP Term
 parse_term_base = parse_lexeme $ choice
   [ parse_lam
   , parse_ctr
+  , parse_par
   , parse_mat
   , parse_ref
   , parse_var
   ]
+
+parse_par :: ReadP Term
+parse_par = do
+  parse_lexeme (char '(')
+  t <- parse_term
+  ts <- many parse_term
+  parse_lexeme (char ')')
+  return (foldl' App t ts)
 
 parse_term_suff :: Term -> ReadP Term
 parse_term_suff t = loop <++ return t where
@@ -337,7 +342,7 @@ tests =
   , ("@bin_is_zero(#O{#O{#O{#I{#O{#E{}}}}}})", "#F{}")
   , ("@bin_is_zero(#O{#O{#O{#O{#O{#E{}}}}}})", "#T{}")
   , ("@bin_dup(#O{#I{#O{#O{#E{}}}}})", "#P{#O{#I{#O{#O{#E{}}}}} #O{#I{#O{#O{#E{}}}}}}")
-  , ("@bin_busy(#I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#E{}}}}}}}}}}}}}}}})", "#T{}")
+  , ("@bin_busy(#I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#I{#E{}}}}}}}}}}}}}}})", "#T{}")
   ]
 
 test :: IO ()
