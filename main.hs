@@ -222,11 +222,11 @@ wnf e s (Ref k)   = wnf_ref e s (Ref k)
 wnf e s t         = unwind e s t
 
 unwind :: Env -> Stack -> Term -> IO Term
-unwind e (FApp a : s) (Lam x f)      = wnf_app e s (Lam x f) a
-unwind e (FApp a : s) (Mat fk ff fg) = wnf e (FMat (Mat fk ff fg) : s) a
-unwind e (FApp a : s) val            = unwind e s (App val a)
-unwind e (FMat f : s) val            = wnf_mat e s f val
-unwind e []           val            = return val
+unwind e (FApp a : s) (Lam x f)   = wnf_app e s (Lam x f) a
+unwind e (FApp a : s) (Mat k f g) = wnf e (FMat (Mat k f g) : s) a
+unwind e (FApp a : s) x           = unwind e s (App x a)
+unwind e (FMat f : s) x           = wnf_mat e s f x
+unwind e []           x           = return x
 
 wnf_var :: Env -> Stack -> Term -> IO Term
 wnf_var e s (Var k) = do
@@ -243,7 +243,8 @@ wnf_ref e s (Ref k) = do
       inc_inters e
       g <- alloc e f
       wnf e s g
-    Nothing -> error $ "UndefinedReference: " ++ int_to_name k
+    Nothing -> do
+      error $ "UndefinedReference: " ++ int_to_name k
 
 wnf_app :: Env -> Stack -> Term -> Term -> IO Term
 wnf_app e s (Lam x f) a = do
@@ -252,13 +253,13 @@ wnf_app e s (Lam x f) a = do
   wnf e s f
 
 wnf_mat :: Env -> Stack -> Term -> Term -> IO Term
-wnf_mat e s (Mat fk ff fg) (Ctr xk xxs) = do
-  if fk == xk then do
+wnf_mat e s (Mat k f g) (Ctr c xs) = do
+  if k == c then do
     inc_inters e
-    wnf e (map FApp xxs ++ s) ff
+    wnf e (map FApp xs ++ s) f
   else do
     inc_inters e
-    wnf e (map FApp xxs ++ s) fg
+    wnf e s (App g (Ctr c xs))
 wnf_mat e s f x = do
   unwind e s (App f x)
 
@@ -298,9 +299,9 @@ book :: String
 book = unlines
   [ "@id  = λa.a"
   , "@not = λ{#Z: #S{#Z{}}; λp. #Z{}}"
-  , "@dbl = λ{#Z: #Z{}; λp. #S{#S{(@dbl p)}}}"
-  , "@add = λ{#Z: λb.b; λa. λb. #S{(@add a b)}}"
-  , "@prd = λ{#Z: #Z{}; λp. p}"
+  , "@dbl = λ{#Z: #Z{}; λ{#S: λp. #S{#S{(@dbl p)}}; λa.a}}"
+  , "@add = λ{#Z: λb.b; λ{#S: λa. λb. #S{(@add a b)}; λa.a}}"
+  , "@prd = λ{#Z: #Z{}; λ{#S: λp. p; λa.a}}"
   ]
 
 tests :: [(String,String)]

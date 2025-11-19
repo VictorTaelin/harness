@@ -36,5 +36,5 @@ f
 if #A == #B:
   (f x y z ...)
 else:
-  (g x y z ...)
+  (g #B{x,y,z,...})
 ```
