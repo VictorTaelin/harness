@@ -47,7 +47,7 @@ instance Show Term where
   show (App f@App{} x) = init (show f) ++ "," ++ show x ++ ")"
   show (App f@Lam{} x) = "(" ++ show f ++ ")(" ++ show x ++ ")"
   show (App f x)       = show f ++ "(" ++ show x ++ ")"
-  show (Ctr k xs)      = "#" ++ int_to_name k ++ "{" ++ unwords (map show xs) ++ "}"
+  show (Ctr k z)       = "#" ++ int_to_name k ++ "{" ++ unwords (map show z) ++ "}"
   show (Mat k c d)     = "λ{#" ++ int_to_name k ++ ":" ++ show c ++ ";" ++ show d ++ "}"
 
 instance Show Book where
@@ -59,18 +59,14 @@ instance Show Book where
 alphabet :: String
 alphabet = "_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789$"
 
-alphabet_first :: String
-alphabet_first = filter (`notElem` "_0123456789") alphabet
-
 name_to_int :: String -> Int
 name_to_int = foldl' (\acc c -> (acc `shiftL` 6) + idx c) 0
   where idx c = maybe (error "bad name char") id (elemIndex c alphabet)
 
 int_to_name :: Int -> String
-int_to_name 0 = "_"
-int_to_name n = reverse (go n)
-  where go 0 = ""
-        go m = let (q,r) = m `divMod` 64 in alphabet !! r : go q
+int_to_name 0          = "_"
+int_to_name n | n < 64 = [alphabet !! n]
+int_to_name n          = int_to_name (div n 64) ++ int_to_name (mod n 64)
 
 -- Parsing
 -- =======
@@ -80,7 +76,7 @@ parse_lexeme p = skipSpaces *> p
 
 parse_name :: ReadP String
 parse_name = parse_lexeme $ do
-  head <- satisfy (`elem` alphabet_first)
+  head <- satisfy (\c -> elem c alphabet && notElem c "_0123456789")
   tail <- munch (`elem` alphabet)
   return (head : tail)
 
@@ -113,8 +109,7 @@ parse_term_suff t = loop <++ return t where
     parse_lexeme (char '(')
     args <- sepBy parse_term (parse_lexeme (char ','))
     parse_lexeme (char ')')
-    let t' = foldl' App t args
-    parse_term_suff t'
+    parse_term_suff (foldl' App t args)
 
 parse_lam :: ReadP Term
 parse_lam = do
@@ -129,8 +124,8 @@ parse_ctr = do
   parse_lexeme (char '#')
   k <- parse_name
   between (parse_lexeme (char '{')) (parse_lexeme (char '}')) $ do
-    args <- sepBy parse_term (optional (parse_lexeme (char ',')))
-    return (Ctr (name_to_int k) args)
+    z <- sepBy parse_term (optional (parse_lexeme (char ',')))
+    return (Ctr (name_to_int k) z)
 
 parse_mat :: ReadP Term
 parse_mat = do
@@ -185,8 +180,8 @@ read_book s = case readP_to_S parse_book s of
 -- Environment
 -- ===========
 
-new_env :: Book -> IO Env
-new_env bk = do
+init :: Book -> IO Env
+init bk = do
   itr <- newIORef 0
   ids <- newIORef 1
   sub <- newIORef IM.empty
@@ -246,7 +241,7 @@ var :: Env -> Stack -> Term -> IO Term
 var e s (Var k) = do
   mt <- take_sub e k
   case mt of
-    Just t' -> wnf e s t'
+    Just t -> wnf e s t
     Nothing -> unwind e s (Var k)
 
 ref :: Env -> Stack -> Term -> IO Term
@@ -255,7 +250,7 @@ ref e s (Ref k) = do
   case M.lookup k m of
     Just f -> do
       inter e
-      g <- alloc e f
+      g <- copy e f
       wnf e s g
     Nothing -> do
       error $ "UndefinedReference: " ++ int_to_name k
@@ -267,38 +262,38 @@ app e s (Lam x f) a = do
   wnf e s f
 
 mat :: Env -> Stack -> Term -> Term -> IO Term
-mat e s (Mat k f g) (Ctr c xs) = do
+mat e s (Mat k f g) (Ctr c z) = do
   if k == c then do
     inter e
-    wnf e (map FApp xs ++ s) f
+    wnf e (map FApp z ++ s) f
   else do
     inter e
-    wnf e s (App g (Ctr c xs))
+    wnf e s (App g (Ctr c z))
 mat e s f x = do
   unwind e s (App f x)
 
--- Allocation
+-- copyation
 -- ==========
 
-alloc :: Env -> Term -> IO Term
-alloc e term = go IM.empty term where
+copy :: Env -> Term -> IO Term
+copy e term = go IM.empty term where
   go m (Var k) = do
     return $ Var (IM.findWithDefault k k m)
   go m (App f x) = do
-    f' <- go m f
-    x' <- go m x
-    return (App f' x')
+    f <- go m f
+    x <- go m x
+    return (App f x)
   go m (Lam k f) = do
-    k' <- fresh e
-    f' <- go (IM.insert k k' m) f
-    return $ Lam k' f'
-  go m (Ctr k args) = do
-    args' <- mapM (go m) args
-    return (Ctr k args')
+    x <- fresh e
+    f <- go (IM.insert k x m) f
+    return $ Lam x f
+  go m (Ctr k z) = do
+    z <- mapM (go m) z
+    return (Ctr k z)
   go m (Mat k c d) = do
-    c' <- go m c
-    d' <- go m d
-    return (Mat k c' d')
+    c <- go m c
+    d <- go m d
+    return (Mat k c d)
   go m (Ref k) = do
     return (Ref k)
 
@@ -306,15 +301,27 @@ alloc e term = go IM.empty term where
 -- =============
 
 snf :: Env -> Int -> Term -> IO Term
-snf e d x = do
-  !x' <- wnf e [] x
-  case x' of
-    Var k      -> return $ Var k
-    Lam k f    -> Lam d <$> snf e d f
-    App f x    -> App <$> snf e d f <*> snf e d x
-    Ctr k xs   -> Ctr k <$> mapM (snf e d) xs
-    Mat k c d' -> Mat k <$> snf e d c <*> snf e d d'
-    Ref k      -> return (Ref k)
+snf e l x = do
+  !x <- wnf e [] x
+  case x of
+    Var k -> do
+      return $ Var k
+    Lam k f -> do
+      f <- snf e l f
+      return $ Lam l f
+    App f x -> do
+      f <- snf e l f
+      x <- snf e l x
+      return $ App f x
+    Ctr k z -> do
+      z <- mapM (snf e l) z
+      return $ Ctr k z
+    Mat k c d -> do
+      c <- snf e l c
+      d <- snf e l d
+      return $ Mat k c d
+    Ref k -> do
+      return (Ref k)
 
 -- Tests
 -- =====
@@ -350,7 +357,7 @@ tests =
 
 test :: IO ()
 test = forM_ tests $ \ (src, exp) -> do
-  !env <- new_env $ read_book book
+  !env <- init $ read_book book
   !det <- show <$> snf env 1 (read_term src)
   !itr <- readIORef (env_count env)
   if det == exp then do
@@ -365,9 +372,9 @@ test = forM_ tests $ \ (src, exp) -> do
 
 run :: String -> String -> IO ()
 run book_src term_src = do
-  !env <- new_env $ read_book book_src
+  !env <- init $ read_book book_src
   !ini <- getCPUTime
-  !val <- alloc env $ read_term term_src
+  !val <- copy env $ read_term term_src
   !val <- snf env 1 val
   !end <- getCPUTime
   !itr <- readIORef (env_count env)
@@ -385,4 +392,5 @@ main = do
     (fname:_) -> do
       book <- readFile fname
       run book "@main"
-    _ -> test
+    otherwise -> do
+      test
